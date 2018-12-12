@@ -1,0 +1,234 @@
+---
+title: "PHP 2610 HW 1"
+author: "Blain Morin"
+date: "December 12, 2018"
+output: pdf_document
+header-includes:
+- \usepackage{float}
+---
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+### Load libraries
+library(readr)
+library(stargazer)
+library(dplyr)
+library(tidyr)
+library(Hmisc)
+
+
+```
+
+```{r}
+
+### Load Data 
+ctq = read_csv("CTQ_monotonewt_HW1.csv")
+
+
+```
+
+# Question 1:
+
+For question 1, our goal is to fit the model:
+
+$$ logit( \pi(x)) = \beta_0 + \beta_1brate + \beta_2basewt + \beta_3s12wgt + \epsilon  $$
+
+## a.) Fit the model to complete cases only
+
+We first fit a glm using the the complete cases only. Here is the summary of the model:
+
+```{r, results = 'asis'}
+
+model.complete = glm(as.factor(quitpost) ~ brate + basewt + s12wgt, 
+                     family = binomial(), data = ctq)
+
+p.model.complete = summary(model.complete)$coefficients[,4]
+
+stargazer(model.complete, header = FALSE,
+          title = "Complete Cases Only",
+          dep.var.labels = "logit(Quit Status)")
+
+
+```
+
+We see that while our data has 247 observations, only 141 are used in the complete case analysis. 
+
+## b.) Use IPW for handling missingness in X3, and bootstrap resampling for standard error estimation.
+
+Next, we use inverse probability weighting. Inverse probability weighting attempts to overcome the bias of using only complete cases by weighting the observed data by the inverse probability that they were observed. Here is a summary of the resulting model:
+
+```{r, cache = TRUE}
+
+### Create variable to indicate missingness in s12wgt (R = 1 if missing)
+
+set.seed(100)
+
+ctq = ctq %>%
+  mutate(R = ifelse(is.na(s12wgt), 0, 1))
+
+B <- 1000 #Iterations.
+results = matrix(0, B, 4)
+
+### bootstrap resampling so we can get se
+
+for (b in 1:B){
+  
+  bootstrap.sample = ctq %>% 
+    sample_n(nrow(ctq), replace = T)
+
+  pmodel.2 = glm(R ~ quitpost + brate + basewt, family=binomial(), data=bootstrap.sample)
+  
+  bootstrap.sample$ipw = 1/fitted(pmodel.2) ##Probability that they are observed
+
+  main.model = glm(quitpost ~ brate + basewt + s12wgt, subset = (R == 1), weights = ipw,
+                    data=bootstrap.sample, family = binomial(link = "logit"))
+  
+  beta.hat = coefficients(main.model)
+  
+  results[b,] = beta.hat
+  
+}
+
+beta.hat.boot = apply(results, 2, mean)
+se.boot       = apply(results, 2, sd)
+Z.score       = beta.hat.boot / se.boot
+p.val         = 2 * (1 - pnorm(abs(Z.score)))
+
+
+```
+
+```{r, results = 'asis'}
+
+b.table = data.frame(Beta = beta.hat.boot, SE = se.boot,
+                     Z = Z.score, p.value = p.val)
+
+row.names(b.table) = c("Intercept", "brate", "basewt", "s12wgt")
+
+stargazer(b.table, header = FALSE,
+          summary = FALSE, title = "IPW with Bootstrap",
+          table.placement = 'H',
+          column.labels = c("Beta", "SE", "Z", "p-value"))
+
+```
+
+## c.) Use either regression imputation with bootstrap, or multiple imputation, to handle missingness in X3.
+
+Next we try imputing the missing data using the other variables in the data. Here are the results:
+
+
+```{r, cache=TRUE}
+
+### Regression imputation with the bootstrap
+
+B <- 1000 #Iterations.
+results2 = matrix(0, B, 4)
+
+for (b in 1:B){
+  
+  bootstrap.sample = ctq %>% 
+    sample_n(nrow(ctq), replace = T)
+
+  pmodel.2 = lm(s12wgt ~ quitpost + brate + basewt, data=bootstrap.sample, subset = (R==1))
+  bootstrap.sample$fit = predict(pmodel.2, bootstrap.sample)
+
+  bootstrap.sample = bootstrap.sample %>% 
+    mutate(s12wgt.imp = ifelse(R == 1, s12wgt, fit))
+
+  main.model = glm(quitpost ~ brate + basewt + s12wgt.imp, 
+                   data=bootstrap.sample, 
+                   family = binomial())
+ 
+  beta.hat = coefficients(main.model)
+  
+  results2[b,] = beta.hat
+  
+}
+
+```
+
+```{r, results = 'asis'}
+
+beta.hat.boot2 = apply(results2, 2, mean)
+se.boot2       = apply(results2, 2, sd)
+Z.score2       = beta.hat.boot2 / se.boot2
+p.val2         = 2 * (1 - pnorm(abs(Z.score2)))
+
+c.table = data.frame(Beta = beta.hat.boot2, SE = se.boot2,
+                     Z = Z.score2, p.value = p.val2)
+
+row.names(c.table) = c("Intercept", "brate", "basewt", "s12wgt")
+
+stargazer(c.table, header = FALSE,
+          summary = FALSE, title = "Regression Imputation with Bootstrap Samples",
+          table.placement = 'H',
+          column.labels = c("Beta", "SE", "Z", "p-value"))
+
+```
+
+## Summary 
+
+Here we compare the beta coefficients for each of the models:
+
+```{r, results = 'asis'}
+
+table1 = data.frame(Complete.Cases = coef(model.complete),
+                    IPW = beta.hat.boot,
+                    Reg.Imputation = beta.hat.boot2)
+
+stargazer(table1, header = FALSE,
+          summary = FALSE, 
+          title = "Betas Coefficients From Each Model",
+          table.placement = 'H')
+
+```
+
+We see that the  betas are similar between the complete cases model and the IPW model. The regression imputation model finds a larger effects for basewt and s12wgt. 
+
+Next, we compare the p-values for each of the beta coefficients in each of the models:
+
+```{r, results = 'asis'}
+
+table2 = data.frame(Complete.Cases = p.model.complete,
+                    IPW = p.val,
+                    Reg.Imputation = p.val2)
+
+stargazer(table2, header = FALSE,
+          summary = FALSE,
+          title = "Summary of P-values From Each Model")
+
+```
+
+We see that the p-values for each of the covariates are not much different between the models. 
+
+# Question 2:  
+
+This analysis asks you to calculate average weight trajectory for each treatment group. What I mean by weight trajectory is mean weight (and standard error) at baseline, week 6, and week 12.
+
+## a.)  Calculate the weight trajectory using complete cases only.
+
+```{r, results = 'asis'}
+
+ctq = ctq %>% 
+  mutate(ID = row_number())
+
+long.ctq = ctq %>%
+  gather(key = "period", value = "weight", basewt, s06wgt, s12wgt)
+
+complete2 = lm(weight ~ as.factor(period)*Z, data = long.ctq)
+
+stargazer(complete2, header = FALSE,
+          title = "Average Weight Trajectories Using Regression",
+          table.placement = "H",
+          covariate.labels = c("s06wgt",
+                               "s12wgt",
+                               "Z",
+                               "s06wgt * Z",
+                               "s12wgt * Z"))
+
+```
+
+
+
+
