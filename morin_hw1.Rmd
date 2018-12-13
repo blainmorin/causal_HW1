@@ -229,6 +229,56 @@ stargazer(complete2, header = FALSE,
 
 ```
 
+## b.)
+
+```{r, results = 'asis'}
+
+### Create missing indicators
+
+ctq = ctq %>%
+  mutate(R1 = ifelse(is.na(s06wgt), 0, 1),
+         R2 = ifelse(is.na(s12wgt), 0, 1))
+
+ctq.complete = ctq %>%
+  filter(complete.cases(.))
+
+R1mod = glm(R1 ~ age + yrseduc + income + brate + basewt, data = ctq, family = binomial)
+
+R2mod = glm(R2 ~ age + yrseduc + income + brate + basewt + s06wgt, data = ctq, family = binomial)
+
+
+### Make IPW Weights
+R1preds = predict(R1mod, newdata = ctq.complete, type = "response")
+R1weights = 1/R1preds
+
+R2preds = predict(R2mod, newdata = ctq.complete, type = "response")
+R2weights = 1/R2preds
+
+mult.weights = R1weights * R2weights
+
+ctq.complete$ipw = mult.weights
+
+long.ctq.complete = ctq.complete %>%
+  gather(key = "period", value = "weight", basewt, s06wgt, s12wgt)
+
+### Run the regression
+
+b.reg = lm(weight ~ as.factor(period)*Z, data = long.ctq.complete, weights = long.ctq.complete$ipw)
+
+### Make the table
+
+stargazer(b.reg, header = FALSE,
+          title = "Average Weight Trajectories Using Regression",
+          table.placement = "H",
+          covariate.labels = c("s06wgt",
+                               "s12wgt",
+                               "Z",
+                               "s06wgt * Z",
+                               "s12wgt * Z"))
+
+
+```
+
 
 
 
