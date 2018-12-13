@@ -295,15 +295,65 @@ stargazer(d.table, header = FALSE,
 ```
 
 
+## c.) Calculate the weight trajectory using sequential imputation. Use either multiple imputation or regression imputation.
 
+```{r, cache = TRUE}
 
-```{r}
+results4 = matrix(NA, nrow = B, ncol = length(coef(complete2)))
 
+for (i in 1:1000) {
+  
+  bootstrap.sample = ctq %>% 
+    sample_n(nrow(ctq), replace = T)
+    
+  y2model = lm(s06wgt ~ (age + yrseduc + income + brate + basewt) * Z, data = bootstrap.sample)
+  
+  y2.preds = predict(y2model)
+  
+  bootstrap.sample = bootstrap.sample %>%
+    mutate(y2hat = ifelse(R1==1, s06wgt, y2.preds))
+  
+  y3model = lm(s12wgt ~ (age + yrseduc + income + brate + basewt + y2hat) * Z, data = bootstrap.sample)
+  
+  y3.preds = predict(y3model)
+  
+  bootstrap.sample = bootstrap.sample %>%
+    mutate(y3hat = ifelse(R2==1, s12wgt, y3.preds))
+  
+  long.ctq.complete = bootstrap.sample %>%
+    gather(key = "period", value = "weight", basewt, y2hat, y3hat)
+  
+  b.reg = lm(weight ~ as.factor(period)*Z, data = long.ctq.complete)
+  
+  results4[i,] = coef(b.reg)
+  
+}
+
+beta.hat.boot4 = apply(results4, 2, mean)
+se.boot4       = apply(results4, 2, sd)
+Z.score4       = beta.hat.boot4 / se.boot4
+p.val4         = 2 * (1 - pnorm(abs(Z.score4)))
+
+e.table = data.frame(Beta = beta.hat.boot4, SE = se.boot4,
+                     Z = Z.score4, p.value = p.val4)
+
+row.names(e.table) = c("Intercept", "s06wgt", "s12wgt", "Z", "s06wgt * Z", "s12wgt * Z")
 
 
 ```
 
-## c.) Calculate the weight trajectory using sequential imputation. Use either multiple imputation or regression imputation.
+```{r, results = 'asis'}
+
+
+stargazer(e.table, header = FALSE,
+          summary = FALSE, title = "Average Weight Trajectories using Regression Imputation",
+          table.placement = 'H')
+
+
+```
+
+
+```
 
 
 
