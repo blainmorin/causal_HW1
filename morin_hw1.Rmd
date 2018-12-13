@@ -231,26 +231,7 @@ stargazer(complete2, header = FALSE,
 
 ## b.) Calculate the weight trajectory using IPW, with sequential inverse probability weights. To calculate the weight for the week 6 weight, you can use any of the baseline covariates; for the week 12 weight, you can use any of the baseline covariates, and week 6 weight. Smoking status at week 12 cannot be used to calculate the weights.
 
-```{r}
-
-ctq = ctq %>%
-  mutate(R1 = ifelse(is.na(s06wgt), 0, 1),
-         R2 = ifelse(is.na(s12wgt), 0, 1))
-
-
-```
-
-
-
-
-
-
-
-
-
-```{r, results = 'asis'}
-
-### Create missing indicators
+```{r, cache = TRUE}
 
 ctq = ctq %>%
   mutate(R1 = ifelse(is.na(s06wgt), 0, 1),
@@ -259,42 +240,62 @@ ctq = ctq %>%
 ctq.complete = ctq %>%
   filter(complete.cases(.))
 
-R1mod = glm(R1 ~ age + yrseduc + income + brate + basewt, data = ctq, family = binomial)
 
-R2mod = glm(R2 ~ age + yrseduc + income + brate + basewt + s06wgt, data = ctq, family = binomial)
+results3 = matrix(NA, nrow = B, ncol = length(coef(complete2)))
+
+for (i in 1:1000) {
+  
+  bootstrap.sample = ctq %>% 
+    sample_n(nrow(ctq), replace = T)
+  
+  R1mod = glm(R1 ~ age + yrseduc + income + brate + basewt, data = bootstrap.sample, family = binomial)
+
+  R2mod = glm(R2 ~ age + yrseduc + income + brate + basewt + s06wgt, data = bootstrap.sample, family = binomial)
+  
+  R1preds = predict(R1mod, newdata = ctq.complete, type = "response")
+  R1weights = 1/R1preds
+
+  R2preds = predict(R2mod, newdata = ctq.complete, type = "response")
+  R2weights = 1/R2preds
+  
+  mult.weights = R1weights * R2weights
+  
+  ctq.complete$ipw = mult.weights
+  
+  long.ctq.complete = ctq.complete %>%
+    gather(key = "period", value = "weight", basewt, s06wgt, s12wgt)
+  
+  b.reg = lm(weight ~ as.factor(period)*Z, data = long.ctq.complete, weights = long.ctq.complete$ipw)
+  
+  results3[i,] = coef(b.reg)
+  
+}
 
 
-### Make IPW Weights
-R1preds = predict(R1mod, newdata = ctq.complete, type = "response")
-R1weights = 1/R1preds
+beta.hat.boot3 = apply(results3, 2, mean)
+se.boot3       = apply(results3, 2, sd)
+Z.score3       = beta.hat.boot3 / se.boot3
+p.val3         = 2 * (1 - pnorm(abs(Z.score3)))
 
-R2preds = predict(R2mod, newdata = ctq.complete, type = "response")
-R2weights = 1/R2preds
+d.table = data.frame(Beta = beta.hat.boot3, SE = se.boot3,
+                     Z = Z.score3, p.value = p.val3)
 
-mult.weights = R1weights * R2weights
-
-ctq.complete$ipw = mult.weights
-
-long.ctq.complete = ctq.complete %>%
-  gather(key = "period", value = "weight", basewt, s06wgt, s12wgt)
-
-### Run the regression
-
-b.reg = lm(weight ~ as.factor(period)*Z, data = long.ctq.complete, weights = long.ctq.complete$ipw)
-
-### Make the table
-
-stargazer(b.reg, header = FALSE,
-          title = "Average Weight Trajectories Using IPW Regression",
-          table.placement = "H",
-          covariate.labels = c("s06wgt",
-                               "s12wgt",
-                               "Z",
-                               "s06wgt * Z",
-                               "s12wgt * Z"))
+row.names(d.table) = c("Intercept", "s06wgt", "s12wgt", "Z", "s06wgt * Z", "s12wgt * Z")
 
 
 ```
+
+```{r, results = 'asis'}
+
+stargazer(d.table, header = FALSE,
+          summary = FALSE, title = "Average Weight Trajectories using IPW Regression",
+          table.placement = 'H')
+
+
+```
+
+
+
 
 ```{r}
 
